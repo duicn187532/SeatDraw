@@ -22,6 +22,7 @@ func main() {
 		api.GET("/seat", handlers.GetSeat)
 		api.POST("/draw", handlers.DrawSeat)
 		api.POST("/reset", handlers.ResetSeats)
+		api.POST("/init", handlers.InitStatus)
 		api.POST("/update-version", handlers.UpdateVersion)
 
 	}

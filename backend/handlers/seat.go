@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // GetStatus retrieves current seat status
@@ -186,6 +187,55 @@ func DrawSeat(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, rec)
+}
+
+// InitStatus 初始化座位狀態，設定座位總數並清空先前資料
+func InitStatus(c *gin.Context) {
+	// 接收前端傳入的座位數
+	var req struct {
+		TotalSeats int `json:"totalSeats"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+
+	// 建立新的版本號
+	newVersion := time.Now().Format("20060102-150405")
+
+	// 組成新的狀態物件
+	newStatus := bson.M{
+		"version":       newVersion,
+		"totalSeats":    req.TotalSeats,
+		"userSeats":     map[string]int{},
+		"assignedSeats": []int{},
+	}
+
+	// 更新或插入到 seat_status collection
+	if _, err := DB.Collection("seat_status").UpdateOne(
+		context.Background(),
+		bson.M{},
+		bson.M{"$set": newStatus},
+		// 如果尚無文件則插入一筆
+		options.Update().SetUpsert(true),
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 同步清空 seats collection 中所有使用者紀錄
+	if _, err := DB.Collection("seats").DeleteMany(context.Background(), bson.M{}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 回傳新的狀態
+	c.JSON(http.StatusOK, gin.H{
+		"version":       newVersion,
+		"totalSeats":    req.TotalSeats,
+		"userSeats":     map[string]int{},
+		"assignedSeats": []int{},
+	})
 }
 
 // UpdateVersion generates a new version and shuffles existing seat assignments

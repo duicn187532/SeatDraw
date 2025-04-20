@@ -1,19 +1,14 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
-import { Loader2, RefreshCw, Info, AlertCircle } from "lucide-react"
-import confetti from "canvas-confetti"
+import type React from "react"
+
+import { useEffect, useState, useCallback, useRef } from "react"
+import { Loader2, RefreshCw, Info, AlertCircle, Settings } from "lucide-react"
 
 interface SeatStatus {
   version: string
   totalSeats: number
   assignedSeats: number[]
-}
-
-interface SeatRecord {
-  userId: string
-  seatNumber: number
-  version: string
 }
 
 export default function SeatDrawingApp() {
@@ -22,30 +17,28 @@ export default function SeatDrawingApp() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [isDrawing, setIsDrawing] = useState(false)
-  const [showConfetti, setShowConfetti] = useState(false)
-  const API_BASE = "http://192.168.68.101:8080/api";
+  const [showInitModal, setShowInitModal] = useState(false)
+  const [seatCount, setSeatCount] = useState<string>("30")
+  const API_BASE = "https://seat-app-588775665030.asia-east1.run.app/api"
+  const modalRef = useRef<HTMLDivElement>(null)
 
   const getUserId = (): string => {
     let uid = localStorage.getItem("userId")
     if (!uid) {
-      // Fixed function - uses a fallback UUID generator when crypto.randomUUID is not available
       uid = generateUUID()
       localStorage.setItem("userId", uid)
     }
     return uid
   }
 
-  // UUID generator fallback function
   const generateUUID = (): string => {
-    // Check if crypto.randomUUID is available
-    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
       return crypto.randomUUID()
     }
-    
-    // Fallback implementation
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0
-      const v = c === 'x' ? r : (r & 0x3 | 0x8)
+
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0
+      const v = c === "x" ? r : (r & 0x3) | 0x8
       return v.toString(16)
     })
   }
@@ -55,7 +48,6 @@ export default function SeatDrawingApp() {
     setTimeout(() => setError(""), 3000)
   }
 
-  /** 1. 读取后端状态（version、totalSeats、assignedSeats） */
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/status`)
@@ -69,7 +61,32 @@ export default function SeatDrawingApp() {
     }
   }, [API_BASE])
 
-  /** 2. 点击「更新版本」按钮时调用：拉最新 version 并存到 localStorage */
+  const initStatus = async (num: number) => {
+    try {
+      setLoading(true)
+      const res = await fetch(`${API_BASE}/init`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ totalSeats: num }),
+      })
+
+      if (!res.ok) {
+        throw new Error("初始化失敗")
+      }
+
+      const payload = await res.json()
+      console.log("Init result:", payload)
+      await fetchStatus()
+      setShowInitModal(false)
+    } catch (e: any) {
+      showError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const updateVersion = async () => {
     setLoading(true)
     try {
@@ -79,18 +96,15 @@ export default function SeatDrawingApp() {
       if (!res.ok) throw new Error("版本更新失敗")
       const data = await res.json()
       if (data.version) {
-        localStorage.setItem("seatVersion", data.version)
-        // 版本更新后重新获取状态和座位
+        setSeat(null)
         await fetchStatus()
-        await checkUserSeat()
       }
     } catch (e: any) {
       showError(e.message)
     }
     setLoading(false)
   }
-  
-  /** 检查当前用户的座位分配情况 */
+
   const checkUserSeat = async () => {
     try {
       const uid = getUserId()
@@ -112,46 +126,54 @@ export default function SeatDrawingApp() {
     }
     return false
   }
-  
-  /** 3. 每次打开 App 时检查本地版本 vs 后端版本 */
+
   useEffect(() => {
     ;(async () => {
       setLoading(true)
       const backendVer = await fetchStatus()
       const localVer = localStorage.getItem("seatVersion")
-      
-      // 若 localVer 不存在，先把后端 version 存下
+      console.log(`本地版本${localVer}`)
+      console.log(`當前版本${backendVer}`)
+
       if (!localVer && backendVer) {
         localStorage.setItem("seatVersion", backendVer)
       }
-      
-      // 若两者一致，尝试读取已抽过的座位
+
       if (backendVer && localVer === backendVer) {
         await checkUserSeat()
       } else {
-        // 如果不一致，清除旧结果
         localStorage.removeItem("seatNumber")
         setSeat(null)
       }
-      
+
       setLoading(false)
     })()
   }, [fetchStatus])
 
-  /** 4. 抽座位 */
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
+        setShowInitModal(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [])
+
   const drawSeat = async () => {
     if (!status) return
-    
-    // 检查是否所有座位都已分配
+
     if (status.assignedSeats.length >= status.totalSeats) {
       showError("所有座位已分配完畢")
       return
     }
-    
+
     setIsDrawing(true)
     setLoading(true)
 
-    // 简单动画
     const duration = 1500
     const start = Date.now()
     const loop = () => {
@@ -173,26 +195,22 @@ export default function SeatDrawingApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: uid }),
       })
-      
+
       if (!res.ok) throw new Error("抽籤請求失敗")
-      
+
       const data = await res.json()
-      
+
       if (data.error) {
         showError(data.error)
         setSeat(null)
         return
       }
-      
+
       if (data.seatNumber != null) {
         setSeat(data.seatNumber)
         localStorage.setItem("seatNumber", data.seatNumber.toString())
         localStorage.setItem("seatVersion", data.version)
-        setShowConfetti(true)
-        triggerConfetti()
-        setTimeout(() => setShowConfetti(false), 3000)
-        
-        // Refresh status after successful draw
+
         fetchStatus()
       } else {
         showError("座位分配失敗")
@@ -205,122 +223,168 @@ export default function SeatDrawingApp() {
     }
   }
 
-  const triggerConfetti = () => {
-    const duration = 2000
-    const end = Date.now() + duration
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 }
-    const rand = (min: number, max: number) => Math.random() * (max - min) + min
-    const iv = setInterval(() => {
-      const tl = end - Date.now()
-      if (tl <= 0) return clearInterval(iv)
-      const count = 50 * (tl / duration)
-      confetti({ ...defaults, particleCount: count, origin: { x: rand(0.1, 0.3), y: Math.random() - 0.2 } })
-      confetti({ ...defaults, particleCount: count, origin: { x: rand(0.7, 0.9), y: Math.random() - 0.2 } })
-    }, 250)
-  }
+  const seatsPercentage = status ? Math.round((status.assignedSeats.length / status.totalSeats) * 100) : 0
 
-  const seatsPercentage = status
-    ? Math.round((status.assignedSeats.length / status.totalSeats) * 100)
-    : 0
-    
   const isAllSeatsAssigned = status ? status.assignedSeats.length >= status.totalSeats : false
   const hasCurrentSeat = seat !== null
   const isVersionMatch = status?.version === localStorage.getItem("seatVersion")
 
+  const handleInitSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const numSeats = Number.parseInt(seatCount)
+    if (isNaN(numSeats) || numSeats <= 0) {
+      showError("請輸入有效的座位數量")
+      return
+    }
+    initStatus(numSeats)
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 p-6 flex items-center justify-center">
-      <div className="w-full max-w-xl bg-white rounded-lg shadow-lg overflow-hidden">
-        {/* Header */}
-        <div className="bg-teal-500 text-white p-6 text-center">
-          <h1 className="text-3xl font-bold">同學會抽座位</h1>
+    <div className="h-full fixed inset-0 bg-gradient-to-b from-blue-50 to-blue-100 flex flex-col">
+      {/* 頂部標題欄 - 更大更明顯 */}
+      <div className="bg-blue-500 text-white py-20 px-6 text-center relative shadow-lg">
+        <h1 className="text-8xl font-bold">一 班 同 學 會</h1>
+        <button
+          onClick={() => setShowInitModal(true)}
+          className="absolute right-6 top-1/2 -translate-y-1/2 p-4 rounded-full bg-white/20"
+          aria-label="初始化設定"
+        >
+          <Settings className="w-16 h-16 text-white" />
+        </button>
+      </div>
+
+      {/* 主體內容區 - 增加間距和大小 */}
+      <div className="flex-1 flex flex-col px-6 pt-6 pb-8">
+        {/* 版本信息區 - 增大文字 */}
+        <div className="bg-gradient-to-l from-blue-100 to-blue-50 flex justify-between items-center py-4 shadow">
+          <div className="pl-4 text-xl text-blue-800">
+            <p className="font-medium">當前版本</p>
+            <p>{status?.version || "20230420-204043"}</p>
+          </div>
+          <button
+            onClick={updateVersion}
+            disabled={loading}
+            className="flex items-center text-xl text-blue-800 px-5 py-3 rounded-full bg-blue-200"
+          >
+            <RefreshCw className={`w-7 h-7 mr-2 ${loading ? "animate-spin" : ""}`} />
+            更新版本
+          </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6 space-y-6">
-          {error && (
-            <div className="flex items-start bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-              <AlertCircle className="w-5 h-5 mr-2 mt-0.5" />
-              <div>
-                <h3 className="font-medium">錯誤</h3>
-                <p className="text-sm">{error}</p>
-              </div>
+        {/* 座位顯示區 - 更大更明顯 */}
+        <div className="flex-1 flex justify-center items-center my-10">
+          {hasCurrentSeat ? (
+            <div className="relative w-96 h-96 bg-white rounded-full flex items-center justify-center shadow-xl">
+              <span className="text-[180px] font-bold text-blue-500">{seat}</span>
+            </div>
+          ) : (
+            <div className="w-96 h-96 bg-gray-200 rounded-full flex items-center justify-center">
+              <span className="text-[240px] font-bold text-gray-400">?</span>
             </div>
           )}
-
-          {/* 显示当前版本 */}
-          {status && (
-            <div className="flex justify-between items-center">
-              <span>當前版本：{status.version}</span>
-              <button
-                onClick={updateVersion}
-                disabled={loading}
-                className="flex items-center text-sm text-teal-600 hover:text-teal-800"
-              >
-                <RefreshCw className="w-4 h-4 mr-1" />
-                更新版本
-              </button>
-            </div>
-          )}
-
-          {/* 抽座位区域 */}
-          <div className="flex flex-col items-center">
-            {hasCurrentSeat && (
-              <div className="mb-4 text-center">
-                <div className="text-6xl font-bold text-teal-500">{seat}</div>
-                <p className="mt-2">你的座位號碼</p>
-              </div>
+        </div>
+        {/* 抽座位按鈕 - 更大更明顯 */}
+        <div className="flex justify-center mb-20">
+          <button
+            onClick={drawSeat}
+            disabled={loading || isDrawing || hasCurrentSeat || isAllSeatsAssigned}
+            className={`w-full max-w-xl py-10 rounded-full text-center text-white font-bold text-7xl ${
+              loading || isDrawing || hasCurrentSeat || isAllSeatsAssigned
+                ? "bg-gray-400"
+                : "bg-gradient-to-r from-blue-500 to-cyan-400"
+            }`}
+          >
+            {isDrawing ? (
+              <span className="flex items-center justify-center">
+                <Loader2 className="animate-spin mr-3 w-8 h-8" /> 抽座位中...
+              </span>
+            ) : isAllSeatsAssigned ? (
+              "所有座位已分配完畢"
+            ) : hasCurrentSeat && isVersionMatch ? (
+              "已分配座位"
+            ) : (
+              "抽座位"
             )}
-
-            <button
-              onClick={drawSeat}
-              disabled={loading || isDrawing || hasCurrentSeat || isAllSeatsAssigned}
-              className={`px-8 py-4 text-lg text-white rounded-full transition ${
-                loading || isDrawing || hasCurrentSeat || isAllSeatsAssigned
-                  ? "bg-gray-400 cursor-not-allowed"
-                  : "bg-gradient-to-r from-teal-500 to-emerald-500 hover:scale-105"
-              }`}
-            >
-              {isDrawing ? (
-                <>
-                  <Loader2 className="animate-spin mr-2 inline-block" /> 抽座位中...
-                </>
-              ) : isAllSeatsAssigned ? (
-                "所有座位已分配完畢"
-              ) : hasCurrentSeat ? (
-                "已分配座位"
-              ) : (
-                "抽座位"
-              )}
-            </button>
+          </button>
+        </div>
+        {/* 已分配座位進度條 - 增大 */}
+        <div className="mt-10">
+          <div className="flex justify-between text-2xl mb-3">
+            <span>已分配座位</span>
+            <span>{status ? `${status.assignedSeats.length} / ${status.totalSeats}` : "3 / 15"}</span>
           </div>
-
-          {/* 进度条 */}
-          {status && (
-            <div className="mt-6 space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>已分配</span>
-                <span>
-                  {status.assignedSeats.length} / {status.totalSeats}
-                </span>
-              </div>
-              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-teal-500 rounded-full transition-all"
-                  style={{ width: `${seatsPercentage}%` }}
-                />
-              </div>
-            </div>
-          )}
+          <div className="h-6 w-full bg-gray-200 rounded-full">
+            <div className="h-full bg-blue-500 rounded-full" style={{ width: `${seatsPercentage || 20}%` }} />
+          </div>
+          <div className="flex justify-between text-xl text-gray-500 mt-3">
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex justify-between items-center p-4 bg-slate-50 border-t">
-          <div className="flex items-center text-xs text-slate-500">
-            <Info className="w-3 h-3 mr-1" />
-            ID: {getUserId().slice(0, 8)}…
+        {/* 錯誤信息顯示 - 增大 */}
+        {error && (
+          <div className="flex items-start bg-red-50 border border-red-200 text-red-800 p-5 rounded-lg animate-pulse mt-6">
+            <AlertCircle className="w-8 h-8 mr-3 flex-shrink-0" />
+            <p className="text-xl">{error}</p>
           </div>
+        )}
+      </div>
+
+      {/* 底部信息欄 - 增大 */}
+      <div className="text-xl text-gray-500 flex justify-between items-center p-6 border-t border-gray-200">
+        <div className="flex items-center">
+          <Info className="w-6 h-6 mr-2" />
+          ID: {getUserId()}
         </div>
       </div>
+
+      {/* 初始化設定模态框 - 增大 */}
+      {showInitModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div ref={modalRef} className="bg-white rounded-2xl w-full m-20 p-12">
+            <h3 className="text-5xl font-bold mb-6">初始化設定</h3>
+            <form onSubmit={handleInitSubmit}>
+              <div className="mb-6">
+                <label htmlFor="seatCount" className="block text-4xl font-medium mb-3">
+                  座位數量
+                </label>
+                <input
+                  type="number"
+                  id="seatCount"
+                  value={seatCount}
+                  onChange={(e) => setSeatCount(e.target.value)}
+                  className="w-full px-5 py-4 text-4xl border border-gray-300 rounded-2xl"
+                  placeholder="請輸入座位數量"
+                  min="1"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-4">
+                <button
+                  type="button"
+                  onClick={() => setShowInitModal(false)}
+                  className="px-12 py-12 text-4xl text-gray-700 bg-gray-100 rounded-2xl"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-12 py-12 text-4xl text-white bg-blue-500 rounded-2xl"
+                >
+                  {loading ? (
+                    <span className="flex items-center">
+                      <Loader2 className="animate-spin w-6 h-6 mr-2" /> 處理中
+                    </span>
+                  ) : (
+                    "確認"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
+
   )
 }
