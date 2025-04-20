@@ -18,9 +18,16 @@ export default function SeatDrawingApp() {
   const [error, setError] = useState("")
   const [isDrawing, setIsDrawing] = useState(false)
   const [showInitModal, setShowInitModal] = useState(false)
-  const [seatCount, setSeatCount] = useState<string>("30")
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [seatCount, setSeatCount] = useState<number>(0)
+  const [password, setPassword] = useState("")
+  const [pendingAction, setPendingAction] = useState<"updateVersion" | "initStatus" | null>(null)
   const API_BASE = "https://seat-app-588775665030.asia-east1.run.app/api"
   const modalRef = useRef<HTMLDivElement>(null)
+  const passwordModalRef = useRef<HTMLDivElement>(null)
+  
+  // 設定密碼 - 在實際應用中應該使用加密儲存或後端驗證
+  const ADMIN_PASSWORD = "password"
 
   const getUserId = (): string => {
     let uid = localStorage.getItem("userId")
@@ -53,7 +60,8 @@ export default function SeatDrawingApp() {
       const res = await fetch(`${API_BASE}/status`)
       if (!res.ok) throw new Error("狀態讀取失敗")
       const st: SeatStatus = await res.json()
-      setStatus(st)
+      setStatus(st);
+      setSeatCount(st.totalSeats);
       return st.version
     } catch (e: any) {
       showError(e.message)
@@ -155,6 +163,10 @@ export default function SeatDrawingApp() {
       if (modalRef.current && !modalRef.current.contains(event.target as Node)) {
         setShowInitModal(false)
       }
+      if (passwordModalRef.current && !passwordModalRef.current.contains(event.target as Node)) {
+        setShowPasswordModal(false)
+        setPendingAction(null)
+      }
     }
 
     document.addEventListener("mousedown", handleClickOutside)
@@ -223,21 +235,50 @@ export default function SeatDrawingApp() {
     }
   }
 
+  // 處理密碼驗證
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (password === ADMIN_PASSWORD) {
+      // 密碼正確，執行待處理的動作
+      if (pendingAction === "updateVersion") {
+        updateVersion()
+      } else if (pendingAction === "initStatus") {
+        const numSeats = seatCount
+        if (isNaN(numSeats) || numSeats <= 0) {
+          showError("請輸入有效的座位數量")
+          return
+        }
+        initStatus(numSeats)
+      }
+      
+      // 清除密碼和關閉模態框
+      setPassword("")
+      setShowPasswordModal(false)
+      setPendingAction(null)
+    } else {
+      showError("密碼錯誤")
+    }
+  }
+
+  // 要求輸入密碼以更新版本
+  const requestUpdateVersion = () => {
+    setPendingAction("updateVersion")
+    setShowPasswordModal(true)
+  }
+
+  // 處理初始化設定的提交
+  const handleInitSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setPendingAction("initStatus")
+    setShowPasswordModal(true)
+  }
+
   const seatsPercentage = status ? Math.round((status.assignedSeats.length / status.totalSeats) * 100) : 0
 
   const isAllSeatsAssigned = status ? status.assignedSeats.length >= status.totalSeats : false
   const hasCurrentSeat = seat !== null
   const isVersionMatch = status?.version === localStorage.getItem("seatVersion")
-
-  const handleInitSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    const numSeats = Number.parseInt(seatCount)
-    if (isNaN(numSeats) || numSeats <= 0) {
-      showError("請輸入有效的座位數量")
-      return
-    }
-    initStatus(numSeats)
-  }
 
   return (
     <div className="h-full fixed inset-0 bg-gradient-to-b from-blue-50 to-blue-100 flex flex-col">
@@ -262,7 +303,7 @@ export default function SeatDrawingApp() {
             <p>{status?.version || "20230420-204043"}</p>
           </div>
           <button
-            onClick={updateVersion}
+            onClick={requestUpdateVersion}
             disabled={loading}
             className="flex items-center text-xl text-blue-800 px-5 py-3 rounded-full bg-blue-200"
           >
@@ -351,7 +392,7 @@ export default function SeatDrawingApp() {
                   type="number"
                   id="seatCount"
                   value={seatCount}
-                  onChange={(e) => setSeatCount(e.target.value)}
+                  onChange={(e) => setSeatCount(Number(e.target.value))}
                   className="w-full px-5 py-4 text-4xl border border-gray-300 rounded-2xl"
                   placeholder="請輸入座位數量"
                   min="1"
@@ -384,7 +425,60 @@ export default function SeatDrawingApp() {
           </div>
         </div>
       )}
-    </div>
 
+      {/* 密碼驗證模态框 */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div ref={passwordModalRef} className="bg-white rounded-2xl w-full m-20 p-12">
+            <h3 className="text-5xl font-bold mb-6">
+              管理員驗證
+            </h3>
+            <p className="text-3xl mb-8 text-gray-600">請輸入管理員密碼以繼續操作</p>
+            <form onSubmit={handlePasswordSubmit}>
+              <div className="mb-6">
+                <label htmlFor="password" className="block text-4xl font-medium mb-3">
+                  密碼
+                </label>
+                <input
+                  type="password"
+                  id="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-5 py-4 text-4xl border border-gray-300 rounded-2xl"
+                  placeholder="請輸入管理員密碼"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordModal(false)
+                    setPendingAction(null)
+                    setPassword("")
+                  }}
+                  className="px-12 py-12 text-4xl text-gray-700 bg-gray-100 rounded-2xl"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-12 py-12 text-4xl text-white bg-blue-500 rounded-2xl"
+                >
+                  {loading ? (
+                    <span className="flex items-center">
+                      <Loader2 className="animate-spin w-6 h-6 mr-2" /> 處理中
+                    </span>
+                  ) : (
+                    "驗證"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
