@@ -3,14 +3,18 @@ package main
 import (
 	"backend/handlers"
 	"log"
+	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	// 用你的 Atlas 連線字串，並指定資料庫名稱
-	atlasURI := "mongodb+srv://root:21airr01@mycluster.wk4zgas.mongodb.net/?retryWrites=true&w=majority&appName=MyCluster"
+	// Atlas 連線字串改由環境變數 MONGODB_URI 提供，勿寫死在程式碼
+	atlasURI := os.Getenv("MONGODB_URI")
+	if atlasURI == "" {
+		log.Fatal("MONGODB_URI is not set")
+	}
 	handlers.InitDB(atlasURI, "SeatDraw")
 
 	r := gin.Default()
